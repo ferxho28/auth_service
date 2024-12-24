@@ -6,14 +6,18 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from rest_framework.exceptions import ValidationError
-from .serializer import (
-    UserRegistrationSerializer,
-    UserSerializer,
-    CustomTokenObtainPairSerializer
-)
+from django.core.mail import send_mail
+from django.template.loader import render_to_string
+from django.utils import timezone
+import secrets
 
+from auth_service import settings
+from .models import PasswordResetToken
+from .serializer import *
 User = get_user_model()
 
+import logging
+logger = logging.getLogger(__name__)
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
 
@@ -73,3 +77,71 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+
+class PasswordResetRequestView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+
+        try:
+            user = User.objects.get(email=email)
+
+            # Generar token único
+            token = secrets.token_urlsafe(32)
+            PasswordResetToken.objects.create(
+                user=user,
+                token=token
+            )
+
+            # Enviar email
+            reset_url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
+            return Response({
+                "message": "Enlace de restablecimiento generado exitosamente.",
+                "reset_url": reset_url
+            })
+        except User.DoesNotExist:
+            # Misma respuesta para evitar revelar si el email existe
+            return Response({
+                "message": "Si el correo existe en nuestra base de datos, recibirás instrucciones para recuperar tu contraseña"
+            })
+
+
+class PasswordResetConfirmView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            reset_token = PasswordResetToken.objects.get(
+                token=serializer.validated_data['token'],
+                is_used=False
+            )
+
+            if not reset_token.is_valid():
+                return Response(
+                    {"error": "El token ha expirado"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Cambiar contraseña
+            user = reset_token.user
+            user.set_password(serializer.validated_data['new_password'])
+            user.save()
+
+            # Marcar token como usado
+            reset_token.is_used = True
+            reset_token.save()
+
+            return Response({"message": "Contraseña actualizada exitosamente"})
+
+        except PasswordResetToken.DoesNotExist:
+            return Response(
+                {"error": "Token inválido"},
+                status=status.HTTP_400_BAD_REQUEST
+            )

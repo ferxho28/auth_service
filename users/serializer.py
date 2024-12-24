@@ -9,7 +9,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
-        token['name'] = user.username
+        token['first_name'] = user.first_name
+        token['last_name'] = user.last_name
         token['email'] = user.email
         token['is_verified'] = user.is_verified
         return token
@@ -20,7 +21,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ('name', 'email', 'password', 'password2', 'phone_number', 'is_verified')
+        fields = ('first_name', 'last_name', 'email', 'password', 'password2', 'phone_number', 'is_verified')
         read_only_fields = ('is_verified',)  # 'is_verified' es de solo lectura si no se debe establecer en el registro
 
     def validate(self, attrs):
@@ -34,6 +35,20 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             validated_data['username'] = validated_data['email']  # Usamos el email como username
         user = User.objects.create_user(**validated_data)
         return user
+
+#passwordReset
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    new_password = serializers.CharField(validators=[validate_password])
+    new_password2 = serializers.CharField()
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['new_password2']:
+            raise serializers.ValidationError({"new_password": "Las contraseñas no coinciden"})
+        return attrs
 
 
 class UserSerializer(serializers.ModelSerializer):
